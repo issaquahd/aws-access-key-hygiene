@@ -1,0 +1,14 @@
+flowchart LR
+  rule["EventBridge rule<br/>rate(1 day)"]
+  admin["run-once.sh<br/>(CloudShell)"]
+  fn["Lambda python3.12<br/>access key hygiene"]
+  iam["IAM credential report<br/>generate + get"]
+  s3["S3 report bucket<br/>Block Public Access on<br/>SSE-S3, TLS-only policy<br/>30-day expiry"]
+  logs["CloudWatch Logs<br/>14-day retention"]
+
+  rule -- "invoke" --> fn
+  admin -- "lambda invoke" --> fn
+  fn -- "GenerateCredentialReport<br/>GetCredentialReport" --> iam
+  fn -- "PutObject reports/..." --> s3
+  fn --> logs
+  admin -- "s3 cp report.json" --> s3

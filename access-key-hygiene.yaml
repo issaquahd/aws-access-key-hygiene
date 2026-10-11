@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Access key hygiene. A daily Lambda generates the IAM credential report, flags
+  old or unused access keys and console users without MFA, and writes a JSON
+  report to a private, encrypted S3 bucket.
+
+Parameters:
+  MaxKeyAgeDays:
+    Type: Number
+    Default: 90
+    MinValue: 1
+    Description: Flag active access keys not rotated in this many days.
+  MaxUnusedDays:
+    Type: Number
+    Default: 90
+    MinValue: 1
+    Description: Flag active access keys not used in this many days (never-used keys age from rotation).
+  ReportRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    Description: Reports expire from the bucket after this many days.
+
+Resources:
+  ReportBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-reports
+            Status: Enabled
+            ExpirationInDays: !Ref ReportRetentionDays
+
+  ReportBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ReportBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt ReportBucket.Arn
+              - !Sub ${ReportBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  HygieneLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-hygiene
+      RetentionInDays: 14
+
+  HygieneRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: credential-report-to-s3
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt HygieneLogGroup.Arn
+              - Sid: CredentialReport
+                Effect: Allow
+                Action:
+                  - iam:GenerateCredentialReport
+                  - iam:GetCredentialReport
+                Resource: "*"
+              - Sid: WriteReports
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub ${ReportBucket.Arn}/reports/*
+
+  HygieneFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: HygieneLogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-hygiene
+      Description: Flags old/unused access keys and console users without MFA.
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt HygieneRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          REPORT_BUCKET: !Ref ReportBucket
+          MAX_KEY_AGE_DAYS: !Ref MaxKeyAgeDays
+          MAX_UNUSED_DAYS: !Ref MaxUnusedDays
+      Code:
+        # Placeholder. deploy.sh uploads src/hygiene.py (as index.py) right after the stack deploys.
+        ZipFile: |
+          def handler(event, context):
+              raise RuntimeError("Hygiene code not uploaded yet: run ./deploy.sh")
+
+  DailyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${AWS::StackName}-daily
+      Description: Run the access key hygiene check once a day.
+      ScheduleExpression: rate(1 day)
+      State: ENABLED
+      Targets:
+        - Id: hygiene-function
+          Arn: !GetAtt HygieneFunction.Arn
+
+  DailyRuleInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref HygieneFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyRule.Arn
+
+Outputs:
+  FunctionName:
+    Value: !Ref HygieneFunction
+  BucketName:
+    Value: !Ref ReportBucket
+  RuleName:
+    Value: !Ref DailyRule

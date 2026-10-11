@@ -1,0 +1,15 @@
+# runtime outputs and local tooling state
+__pycache__/
+*.pyc
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+build/
+*.zip
+.DS_Store
+
+# demo outputs (contain IAM user names)
+/report.json
+/response.json
