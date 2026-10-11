@@ -2,6 +2,8 @@
 
 A daily Lambda function that reads the **IAM credential report** and flags the access-key and MFA problems that cause real incidents.
 
+**Status:** linted and unit-tested offline. Not yet run against a live AWS account; this line changes when it has been.
+
 ## What it builds (CloudFormation, `access-key-hygiene.yaml`)
 
 * Lambda (`python3.12`) that generates and reads the credential report, then writes a JSON report to S3 (`reports/YYYY/MM/DD/...json` plus `reports/latest.json`).
